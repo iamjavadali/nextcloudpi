@@ -1,5 +1,5 @@
 # NextcloudPi
-Full Nextcloud Docker Container for Raspberry Pi 4 &amp; 5 with Collabora Online server (Nextcloud Office) behind Nginx Reverse Proxy Manager + GoAccess Charts
+Full Nextcloud Docker Container for Raspberry Pi 4 &amp; 5 with Collabora Online server (Nextcloud Office) behind Nginx Reverse Proxy Manager + GoAccess Charts. Supported with Redis Cache + Cron Jobs.
 
 # NextcloudPi Image Support + 
 Nextcloud image errors fixed and addon supported
@@ -34,9 +34,11 @@ cd nextcloudpi/nextcloud
 
 # Install NextcloudPi Container
 
-- 2 containers
-	1. nextcloudpi
-	2. nextcloudpidb
+- 4 containers
+	1. nextcloud
+	2. nextcloud_db
+	3. nextcloud_cron
+	4. nextcloud_redis
 
 Edit the following files if you would like to make changes to php settings and database details
 
@@ -191,6 +193,9 @@ This whole array will allow your nextcloud to generate preview thumbnails of vid
 
 
 # Colabora Online (Nextcloud Office) Server Installation
+
+- 1 containers
+	1. collabora
 
 ```
 cd nextcloudpi/collabora

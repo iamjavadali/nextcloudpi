@@ -1,0 +1,28 @@
+services:
+  # Nextcloud Talk Signaling Server
+  signaling:
+    container_name: nextcloud-signaling
+    image: ghcr.io/strukturag/nextcloud-spreed-signaling:latest
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      - HTTP_LISTEN=${HTTP_LISTEN}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES_SIGNAL}
+      - HASH_KEY=${HASH_KEY}
+      - BLOCK_KEY=${BLOCK_KEY}
+      - INTERNAL_SHARED_SECRET_KEY=${INTERNAL_SHARED_SECRET_KEY}
+      - BACKENDS_ALLOWALL=${BACKENDS_ALLOWALL}
+      - BACKENDS_ALLOWALL_SECRET=${BACKENDS_ALLOWALL_SECRET}
+      - NATS_URL=${NATS_URL}
+    depends_on:
+      - nats
+
+  # NATS
+  nats:
+    container_name: nextcloud-nats
+    image: nats:2.10
+    restart: unless-stopped
+    volumes:
+      - ./gnatsd.conf:/config/gnatsd.conf:ro
+    command: ["-c", "/config/gnatsd.conf"]

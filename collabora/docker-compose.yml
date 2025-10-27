@@ -1,0 +1,21 @@
+services:
+  collabora:
+    image: collabora/code:latest
+    container_name: collabora
+    restart: unless-stopped
+    ports:
+      - "9980:9980"
+    environment:
+      - domain=${COLLABORA_DOMAIN}
+      - username=${COLLABORA_USERNAME}
+      - password=${COLLABORA_PASSWORD}
+      - extra_params=${COLLABORA_EXTRA_PARAMS}
+      - server_name=${COLLABORA_SERVER_NAME}
+    cap_add:
+      - MKNOD
+    volumes:
+      - collabora:/etc/loolwsd
+      - collabora:/var/log/loolwsd
+
+volumes:
+  collabora:

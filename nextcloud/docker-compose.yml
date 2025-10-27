@@ -1,49 +1,136 @@
-version: '2'
+volumes:
+  db:
+  app:
+
+networks:
+  nextcloud:
 
 services:
-
-  nextcloud:
-    build:
-      context: ./nextcloud
-    image: iamjavadali/nextcloudpi
-    container_name: nextcloud
-    restart: unless-stopped
-    links:
-      - nextcloud_db
-    ports:
-      - 8080:80 #You can change port 8080 to any avaiable port on your network.   
-    volumes:
-      - nextcloud:/var/www/html
-
-  nextcloud_db:
-    build:
-      context: ./mysql
-    image: iamjavadali/nextcloudpidb
-    container_name: nextcloud_db
+ # MySQL Database Server 
+  db:
+    container_name: nextcloud-db
+    image: mariadb:10.6
     restart: always
+    command: --transaction-isolation=READ-COMMITTED --log-bin=binlog --binlog-format=ROW --log_bin_trust_function_creators=1 --max_allowed_packet=256M --wait_timeout=28800 --net_read_timeout=120 --net_write_timeout=300
     volumes:
-      - nextcloud_db:/var/lib/mysql
-    command: --transaction-isolation=READ-COMMITTED --log-bin=binlog --binlog-format=ROW
-
-  nextcloud_redis:
-    image: "redis:alpine"
-    container_name: nextcloud_redis
-    restart: always
-    volumes:
-      - nextcloud_redis:/data
-  
-  nextcloud_cron:
-    depends_on:
+      - db:/var/lib/mysql
+    networks:
       - nextcloud
-    image: iamjavadali/nextcloudpi
-    container_name: nextcloud_cron
-    restart: unless-stopped
-    volumes:
-      - nextcloud:/var/www/html
-    entrypoint: /cron.sh
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
 
-volumes:
-  nextcloud: {}
-  nextcloud_db: {}
-  nextcloud_redis: {}
-  
+ # Regis Cache Server
+  redis:
+    container_name: nextcloud-redis
+    image: redis:alpine
+    restart: always
+    networks:
+      - nextcloud
+
+ # Nextcloud App
+  app:
+    container_name: nextcloud-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iamjavadali/nextcloudpi
+    restart: always
+    networks:
+      - nextcloud
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - app:/var/www/html
+    environment:
+    # --- Database connection ---
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_HOST=${MYSQL_HOST}
+
+    # --- Redis caching ---
+      - REDIS_HOST=${REDIS_HOST}
+
+    # --- Nextcloud initial setup ---
+      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
+      - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
+
+    # --- Trusted domains and proxy ---
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
+      - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
+      - OVERWRITECLIURL=${OVERWRITECLIURL}
+      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+
+    # --- PHP / Runtime settings ---
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
+      - PHP_UPLOAD_LIMIT=${PHP_UPLOAD_LIMIT}
+      - PHP_POST_MAX_SIZE=${PHP_POST_MAX_SIZE}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME}
+      - PHP_MAX_INPUT_TIME=${PHP_MAX_INPUT_TIME}
+
+    # --- OPCache settings (improve performance) ---
+      - OPCACHE_MEM_SIZE=${OPCACHE_MEM_SIZE}
+      - OPCACHE_MAX_ACCELERATED_FILES=${OPCACHE_MAX_ACCELERATED_FILES}
+      - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
+      - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
+
+    # --- Email / SMTP settings ---
+      - SMTP_MODE=${SMTP_MODE}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_PORT=${SMTP_PORT}
+      - MAIL_FROM_ADDRESS=${MAIL_FROM_ADDRESS}
+      - MAIL_DOMAIN=${MAIL_DOMAIN}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_NAME=${SMTP_NAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+
+    # OPTIONAL
+      #- NEXTCLOUD_DATADIR=${NEXTCLOUD_DATADIR}
+
+ # Background Task Cron jobs
+  cron:
+    container_name: nextcloud-cron
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    entrypoint: /cron.sh
+    depends_on:
+      - app
+    networks:
+      - nextcloud
+    volumes:
+      - app:/var/www/html
+    environment:
+      - OVERWRITECLIURL=${OVERWRITECLIURL}
+      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
+      - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
+      - PHP_UPLOAD_LIMIT=${PHP_UPLOAD_LIMIT}
+      - PHP_POST_MAX_SIZE=${PHP_POST_MAX_SIZE}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME}
+      - PHP_MAX_INPUT_TIME=${PHP_MAX_INPUT_TIME}
+      - OPCACHE_MEM_SIZE=${OPCACHE_MEM_SIZE}
+      - OPCACHE_MAX_ACCELERATED_FILES=${OPCACHE_MAX_ACCELERATED_FILES}
+      - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
+      - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
+
+# NGINX Web for Nextcloud
+  web:
+    container_name: nextcloud-web
+    image: nginx:stable-alpine
+    restart: always
+    depends_on:
+      - app
+    networks:
+      - nextcloud
+    ports:
+      - "8080:80" # Internal access, reverse proxied externally
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - app:/var/www/html

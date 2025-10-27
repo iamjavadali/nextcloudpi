@@ -11,8 +11,8 @@ Each service is self-contained with its own `docker-compose.yml` and `.env` (cre
 
 ## What’s included
 
-- **Nextcloud app stack**: Nginx reverse proxy (container), Nextcloud FPM app image, MariaDB, Redis, and a dedicated cron worker. Uses an environment-first setup by renaming `env.txt` to `.env`. fileciteturn5file0
-- **Collabora Online (CODE)**: WOPI server for Office document editing, exposed on host port 9980 by default; configured via `.env` (renamed from `env.txt`). fileciteturn5file1
+- **Nextcloud app stack**: Nginx reverse proxy (container), Nextcloud FPM app image, MariaDB, Redis, and a dedicated cron worker. Uses an environment-first setup by renaming `env.txt` to `.env`.
+- **Collabora Online (CODE)**: WOPI server for Office document editing, exposed on host port 9980 by default; configured via `.env` (renamed from `env.txt`).
 - **Nextcloud Talk Signaling + NATS**: High-performance signaling backend for Talk with WebSocket forwarding, and a NATS message bus. Configuration via `.env` plus a `gnatsd.conf`.
 
 ---

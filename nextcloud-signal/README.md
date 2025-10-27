@@ -121,6 +121,3 @@ docker compose logs -f nats
 
 ---
 
-## License
-
-Add a `LICENSE` file (e.g., MIT) to match your repository terms.

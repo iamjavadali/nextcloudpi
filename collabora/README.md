@@ -102,6 +102,3 @@ docker compose logs -f collabora
 
 ---
 
-## License
-
-Add a `LICENSE` file (e.g., MIT) to match your repository terms.

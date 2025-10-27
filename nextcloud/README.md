@@ -191,7 +191,3 @@ docker compose exec app bash
 - Restrict direct access to port 8080
 
 ---
-
-## License
-
-Add a `LICENSE` file (e.g., MIT) to match your preferred terms.

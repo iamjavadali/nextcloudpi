@@ -190,6 +190,3 @@ Each service README includes update guidance (Nextcloud also uses the web update
 
 ---
 
-## License
-
-Add a `LICENSE` file (e.g., MIT) aligned with your repository terms.

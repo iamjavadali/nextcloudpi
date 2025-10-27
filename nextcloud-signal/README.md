@@ -20,8 +20,8 @@ This repository runs a **Nextcloud Talk high‑performance signaling server** wi
 
 1) **Clone and enter the repo**
 ```bash
-git clone <your-repo-url>
-cd <repo-directory>
+git clone https://github.com/iamjavadali/nextcloudpi.git
+cd nextcloudpi/nextcloud-signal
 ```
 
 2) **Rename and edit your environment file**

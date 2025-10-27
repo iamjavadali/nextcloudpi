@@ -18,8 +18,8 @@ This repository runs a single **Collabora Online** server (CODE) suitable for in
 
 1) **Clone and enter the repo**
 ```bash
-git clone <your-repo-url>
-cd <repo-directory>
+git clone https://github.com/iamjavadali/nextcloudpi.git
+cd nextcloudpi/collabora
 ```
 
 2) **Rename and edit your environment file**

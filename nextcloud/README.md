@@ -37,8 +37,8 @@ This repository provides a containerized Nextcloud setup using dedicated Nginx, 
 
 1) **Clone and enter the repo**
 ```bash
-git clone <your-repo-url>
-cd <repo-directory>
+git clone https://github.com/iamjavadali/nextcloudpi.git
+cd nextcloudpi/nextcloud
 ```
 
 2) **Rename `env.txt` to `.env` and edit values**

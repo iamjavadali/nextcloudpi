@@ -71,11 +71,11 @@ OPCACHE_INTERNED_STRINGS_BUFFER=16
 OPCACHE_REVALIDATE_FREQ=1
 
 # ---- DOMAIN / OVERWRITE NEXTCLOUD ----
-# Change your domain
+# Change OVERWRITECLIURL to your domain or to your host IP Address without a port number. Example: https://192.168.1.115
 OVERWRITECLIURL=https://yourdomain.com
 OVERWRITEPROTOCOL=https
 
-# Space-separated list
+# Space-separated list - Change 'yourdomain.com' to your domain or to your host IP Address without a port number. Example: 192.168.1.115
 NEXTCLOUD_TRUSTED_DOMAINS=yourdomain.com localhost nextcloud-app
 
 # Add/adjust your reverse proxy IP ranges if needed
@@ -92,8 +92,9 @@ SMTP_NAME=user@yourdomain.com
 SMTP_PASSWORD=CHANGE_ME_SMTP
 
 # ---- NEXTCLOUD ADMIN DASHBOARD ----
+# Change your Nextcloud Admin user & password
 NEXTCLOUD_ADMIN_USER=admin
-NEXTCLOUD_ADMIN_PASSWORD=CHANGE_ME_ADMIN
+NEXTCLOUD_ADMIN_PASSWORD=Changeme123$
 ```
 
 ---
@@ -101,6 +102,8 @@ NEXTCLOUD_ADMIN_PASSWORD=CHANGE_ME_ADMIN
 ### `docker-compose.yml` (save as `./docker-compose.yml`)
 This version **pulls from Docker Hub** (recommended for most users).  
 If you want to build locally instead, see the “Build locally” section further down.
+
+OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL} is hashed out in nextcloud-app and nextcloud-cron, so you can run this image without a reverse proxy. Unhash it if you are running behind a proxy.
 
 ```yaml
 volumes:
@@ -111,7 +114,7 @@ networks:
   nextcloud:
 
 services:
-  # MariaDB Database
+ # MySQL Database Server 
   db:
     container_name: nextcloud-db
     image: mariadb:10.6
@@ -127,7 +130,7 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_USER=${MYSQL_USER}
 
-  # Redis Cache
+ # Regis Cache Server
   redis:
     container_name: nextcloud-redis
     image: redis:alpine
@@ -135,10 +138,13 @@ services:
     networks:
       - nextcloud
 
-  # Nextcloud App (FPM)
+ # Nextcloud App
   app:
     container_name: nextcloud-app
-    image: iamjavadali/nextcloudpi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iamjavadali/nextcloudpi
     restart: always
     networks:
       - nextcloud
@@ -148,39 +154,39 @@ services:
     volumes:
       - app:/var/www/html
     environment:
-      # --- Database connection ---
+    # --- Database connection ---
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_USER=${MYSQL_USER}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_HOST=${MYSQL_HOST}
 
-      # --- Redis caching ---
+    # --- Redis caching ---
       - REDIS_HOST=${REDIS_HOST}
 
-      # --- Nextcloud initial setup ---
+    # --- Nextcloud initial setup ---
       - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
 
-      # --- Trusted domains and proxy ---
+    # --- Trusted domains and proxy ---
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
       - OVERWRITECLIURL=${OVERWRITECLIURL}
-      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+    # - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
 
-      # --- PHP / Runtime settings ---
+    # --- PHP / Runtime settings ---
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
       - PHP_UPLOAD_LIMIT=${PHP_UPLOAD_LIMIT}
       - PHP_POST_MAX_SIZE=${PHP_POST_MAX_SIZE}
       - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME}
       - PHP_MAX_INPUT_TIME=${PHP_MAX_INPUT_TIME}
 
-      # --- OPCache settings ---
+    # --- OPCache settings (improve performance) ---
       - OPCACHE_MEM_SIZE=${OPCACHE_MEM_SIZE}
       - OPCACHE_MAX_ACCELERATED_FILES=${OPCACHE_MAX_ACCELERATED_FILES}
       - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
       - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
 
-      # --- Email / SMTP settings ---
+    # --- Email / SMTP settings ---
       - SMTP_MODE=${SMTP_MODE}
       - SMTP_SECURE=${SMTP_SECURE}
       - SMTP_PORT=${SMTP_PORT}
@@ -190,10 +196,12 @@ services:
       - SMTP_NAME=${SMTP_NAME}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
 
-  # Background Tasks (Cron)
+ # Background Task Cron jobs
   cron:
     container_name: nextcloud-cron
-    image: iamjavadali/nextcloudpi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: always
     entrypoint: /cron.sh
     depends_on:
@@ -204,7 +212,7 @@ services:
       - app:/var/www/html
     environment:
       - OVERWRITECLIURL=${OVERWRITECLIURL}
-      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+   #  - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
@@ -217,7 +225,7 @@ services:
       - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
       - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
 
-  # Nginx Web Front-End
+# NGINX Web for Nextcloud
   web:
     container_name: nextcloud-web
     image: nginx:stable-alpine
@@ -227,7 +235,7 @@ services:
     networks:
       - nextcloud
     ports:
-      - "8080:80"
+      - "8080:80" # Internal access, reverse proxied externally
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - app:/var/www/html
@@ -247,7 +255,7 @@ add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; prelo
 
 server {
     listen 80;
-    server_name yourdomain.com; # update your domain here
+    server_name localhost; # update your domain here
 
     root /var/www/html;
     index index.php index.html;

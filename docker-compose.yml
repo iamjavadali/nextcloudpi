@@ -6,7 +6,7 @@ networks:
   nextcloud:
 
 services:
-  # MariaDB Database
+ # MySQL Database Server 
   db:
     container_name: nextcloud-db
     image: mariadb:10.6
@@ -22,7 +22,7 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_USER=${MYSQL_USER}
 
-  # Redis Cache
+ # Regis Cache Server
   redis:
     container_name: nextcloud-redis
     image: redis:alpine
@@ -30,10 +30,13 @@ services:
     networks:
       - nextcloud
 
-  # Nextcloud App (FPM)
+ # Nextcloud App
   app:
     container_name: nextcloud-app
-    image: iamjavadali/nextcloudpi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iamjavadali/nextcloudpi
     restart: always
     networks:
       - nextcloud
@@ -43,39 +46,39 @@ services:
     volumes:
       - app:/var/www/html
     environment:
-      # --- Database connection ---
+    # --- Database connection ---
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_USER=${MYSQL_USER}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_HOST=${MYSQL_HOST}
 
-      # --- Redis caching ---
+    # --- Redis caching ---
       - REDIS_HOST=${REDIS_HOST}
 
-      # --- Nextcloud initial setup ---
+    # --- Nextcloud initial setup ---
       - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
 
-      # --- Trusted domains and proxy ---
+    # --- Trusted domains and proxy ---
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
       - OVERWRITECLIURL=${OVERWRITECLIURL}
       - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
 
-      # --- PHP / Runtime settings ---
+    # --- PHP / Runtime settings ---
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
       - PHP_UPLOAD_LIMIT=${PHP_UPLOAD_LIMIT}
       - PHP_POST_MAX_SIZE=${PHP_POST_MAX_SIZE}
       - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME}
       - PHP_MAX_INPUT_TIME=${PHP_MAX_INPUT_TIME}
 
-      # --- OPCache settings ---
+    # --- OPCache settings (improve performance) ---
       - OPCACHE_MEM_SIZE=${OPCACHE_MEM_SIZE}
       - OPCACHE_MAX_ACCELERATED_FILES=${OPCACHE_MAX_ACCELERATED_FILES}
       - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
       - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
 
-      # --- Email / SMTP settings ---
+    # --- Email / SMTP settings ---
       - SMTP_MODE=${SMTP_MODE}
       - SMTP_SECURE=${SMTP_SECURE}
       - SMTP_PORT=${SMTP_PORT}
@@ -85,10 +88,12 @@ services:
       - SMTP_NAME=${SMTP_NAME}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
 
-  # Background Tasks (Cron)
+ # Background Task Cron jobs
   cron:
     container_name: nextcloud-cron
-    image: iamjavadali/nextcloudpi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: always
     entrypoint: /cron.sh
     depends_on:
@@ -112,7 +117,7 @@ services:
       - OPCACHE_INTERNED_STRINGS_BUFFER=${OPCACHE_INTERNED_STRINGS_BUFFER}
       - OPCACHE_REVALIDATE_FREQ=${OPCACHE_REVALIDATE_FREQ}
 
-  # Nginx Web Front-End
+# NGINX Web for Nextcloud
   web:
     container_name: nextcloud-web
     image: nginx:stable-alpine
@@ -122,7 +127,7 @@ services:
     networks:
       - nextcloud
     ports:
-      - "8080:80"
+      - "8080:80" # Internal access, reverse proxied externally
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - app:/var/www/html

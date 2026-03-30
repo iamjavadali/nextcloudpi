@@ -43,6 +43,21 @@ pipeline {
       steps {
         node(env.PI_NODE) {
           dir(env.RPI_COMPOSE_DIR) {
+            // Stop any lingering containers from a previous build so their file locks
+            // are released before we try to wipe the bind-mount directories.
+            sh """
+              set +e
+              docker stop nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+              docker rm   nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+
+              # Clean bind-mount dirs before deleteDir().
+              # 'rm -rf /target/*' misses dotfiles (.my-healthcheck.cnf etc.) so use find instead.
+              for d in "${env.APP_DIR}/app" "${env.APP_DIR}/db"; do
+                [ -d "\$d" ] || continue
+                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \\
+                  sh -c "find /target -mindepth 1 -depth -delete" || true
+              done
+            """
             deleteDir()
             git branch: env.GIT_BRANCH, url: env.GIT_URL
             sh 'git rev-parse --short=7 HEAD | tee .git_short'
@@ -340,6 +355,11 @@ pipeline {
                 fi
               fi
 
+              # Fallback: stop containers by name in case docker-compose.yml was already
+              # removed by a failed deleteDir() in a previous stage.
+              docker stop nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+              docker rm   nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+
               echo "Removing all ${IMAGE} images..."
               docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" \
                 | grep "^${IMAGE}:" \
@@ -358,12 +378,13 @@ pipeline {
 
         dir(env.RPI_COMPOSE_DIR) {
           // Bind-mount dirs (./app, ./db) are owned by Docker container users.
-          // Jenkins cannot delete them directly — use an Alpine container to wipe first.
+          // 'rm -rf /target/*' misses dotfiles; use 'find -depth -delete' instead.
           sh """
             set +e
             for d in "${env.APP_DIR}/app" "${env.APP_DIR}/db"; do
               if [ -d "\$d" ]; then
-                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest sh -c "rm -rf /target/*" || true
+                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \\
+                  sh -c "find /target -mindepth 1 -depth -delete" || true
               fi
             done
           """

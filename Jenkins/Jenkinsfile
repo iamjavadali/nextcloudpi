@@ -6,7 +6,7 @@ def COLOR_MAP = [
 ]
 
 pipeline {
-  agent any
+  agent none
 
   options {
     timeout(time: 1, unit: 'HOURS')

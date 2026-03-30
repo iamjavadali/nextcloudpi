@@ -72,12 +72,20 @@ services:
       - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
 
-      # --- Trusted domains and proxy ---
+      # --- Trusted domains and proxy / overwrite settings ---
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
+
+      # URL used by Nextcloud CLI jobs and generated links
       - OVERWRITECLIURL=${OVERWRITECLIURL}
-      # Uncomment OVERWRITEPROTOCOL when running behind a reverse proxy (HTTPS)
-      # - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+
+      # Hostname:port users access in the browser
+      - OVERWRITEHOST=${OVERWRITEHOST}
+
+      # Protocol users access in the browser:
+      # use "http" for direct local/LAN testing with no TLS
+      # use "https" when behind a reverse proxy / tunnel / SSL terminator
+      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
 
       # --- PHP / Runtime settings ---
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
@@ -117,8 +125,10 @@ services:
     volumes:
       - ./app:/var/www/html
     environment:
+      # Keep cron aligned with the same URL/origin settings as app
       - OVERWRITECLIURL=${OVERWRITECLIURL}
-      # - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
+      - OVERWRITEHOST=${OVERWRITEHOST}
+      - OVERWRITEPROTOCOL=${OVERWRITEPROTOCOL}
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_TRUSTED_DOMAINS}
       - TRUSTED_PROXIES_NEXTCLOUD=${TRUSTED_PROXIES_NEXTCLOUD}
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}

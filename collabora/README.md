@@ -1,84 +1,59 @@
 # Collabora Online (CODE) — Docker Stack
 
-This repository runs a single **Collabora Online** server (CODE) suitable for integrating with Nextcloud Office. Configuration is environment-driven via `env.txt` which you **rename to `.env`** before starting.
-
-> Repo files used here: `docker-compose.yml`, `env.txt` (rename to `.env`).
-
----
-
-## What this stack does
-
-- Launches **collabora/code:latest** exposing the WOPI service on host port **9980** → container `9980`.
-- Reads admin, domain, and runtime flags from `.env`.
-- Persists configuration and logs on a named volume (`collabora`).
+Single-container **Collabora Online** server for document editing in Nextcloud. Exposes the WOPI service on port `9980` and runs behind nginx-proxy-manager.
 
 ---
 
 ## Quick start
 
-1) **Clone and enter the repo**
 ```bash
-git clone https://github.com/iamjavadali/nextcloudpi.git
-cd nextcloudpi/collabora
-```
-
-2) **Rename and edit your environment file**
-```bash
-mv env.txt .env
-nano .env
-```
-Update the Collabora variables for your setup (domains, admin, password, and extra params).
-
-3) **Start the server**
-```bash
+cp .env.example .env
+nano .env          # set COLLABORA_DOMAIN, COLLABORA_SERVER_NAME, credentials
 docker compose up -d
 ```
 
-4) **Health check**
+Collabora listens at `http://<host>:9980`. Forward your public HTTPS host to this port via nginx-proxy-manager.
+
+---
+
+## Configuration (`.env`)
+
+Copy `.env.example` to `.env` and update:
+
+| Variable | Description |
+|----------|-------------|
+| `COLLABORA_DOMAIN` | Your Nextcloud domain with dots escaped: `cloud\\.yourdomain\\.com` |
+| `COLLABORA_SERVER_NAME` | Public Collabora hostname: `office.yourdomain.com` |
+| `COLLABORA_USERNAME` | Admin console username |
+| `COLLABORA_PASSWORD` | Admin console password |
+| `COLLABORA_EXTRA_PARAMS` | Runtime flags (SSL termination handled by proxy — leave as-is) |
+
+---
+
+## nginx-proxy-manager setup
+
+- **Scheme**: `http`, **Forward hostname**: your host IP, **Port**: `9980`
+- Enable **Force SSL**, **WebSocket support**
+- HSTS is optional (Cloudflare handles it if you're using a tunnel)
+
+---
+
+## Nextcloud integration
+
+In Nextcloud → **Administration → Office**:
+
+1. Select **Use your own server**
+2. Enter your Collabora URL: `https://office.yourdomain.com`
+3. Save and open any document to verify
+
+If WOPI requests are blocked, add the required IP ranges to the WOPI allowlist. If your Collabora domain routes through Cloudflare, add Cloudflare's IPv4 ranges:
+
 ```bash
-docker compose logs -f collabora
+docker exec -u www-data nextcloud-app php occ config:app:set richdocuments wopi_allowlist \
+  --value="103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,104.16.0.0/13,104.24.0.0/14,\
+108.162.192.0/18,131.0.72.0/22,141.101.64.0/18,162.158.0.0/15,172.64.0.0/13,\
+173.245.48.0/20,188.114.96.0/20,190.93.240.0/20,197.234.240.0/22,198.41.128.0/17"
 ```
-
-The container listens on `http://<HOST>:9980`. Put your public HTTPS reverse proxy in front of it.
-
----
-
-## Environment reference (from `env.txt`)
-
-These variables configure Collabora. Rename `env.txt` to `.env` and edit the values:
-
-```dotenv
-# ---- COLLABORA DASHBOARD ----
-COLLABORA_DOMAIN=cloud\\.yourdomain\\.com  #change this to your nextcloud domain.
-COLLABORA_USERNAME=admin
-COLLABORA_PASSWORD=Password$123
-COLLABORA_EXTRA_PARAMS=--o:ssl.enable=false --o:ssl.termination=true --o:welcome.enable=false --o:net.proxy_prefix=true
-COLLABORA_SERVER_NAME=collabora.yourdomain.com #change this to your collabora domain.
-```
-
----
-
-## Reverse proxy notes
-
-- Terminate TLS at your proxy and forward to `http://<HOST>:9980`.
-- Use your public Collabora hostname in DNS, and set it in `.env` (server name and allowed domain).
-- If you change port or hostname, reflect that in your proxy and Nextcloud settings.
-
----
-
-## Nextcloud integration (Office app)
-
-In Nextcloud → **Administration settings → Office**:
-- Choose **Use your own server** and enter your Collabora URL, for example `https://<your-collabora-domain>` or `https://<your-host>:9980`.
-- If WOPI requests are blocked by your proxy provider, add the required ranges to the allow list in Nextcloud as instructed by its warnings.
-- Test by opening a document in Files.
-
----
-
-## Persistence & data
-
-- Named volume `collabora` stores Collabora configuration and logs.
-- To reset the server, stop the container and remove the volume, then re-create it.
 
 ---
 
@@ -86,19 +61,16 @@ In Nextcloud → **Administration settings → Office**:
 
 ```bash
 # Update image and restart
-docker compose pull
-docker compose up -d
-# Inspect logs
+docker compose pull && docker compose up -d
+
+# Logs
 docker compose logs -f collabora
 ```
 
 ---
 
-## Security checklist
+## Security
 
-- Put a trusted TLS certificate on your reverse proxy.
 - Set strong admin credentials in `.env`.
-- Restrict who can reach port 9980 directly; expose only HTTPS on the proxy.
-
----
-
+- Keep port 9980 off the public internet — proxy only.
+- TLS terminates at nginx-proxy-manager, not inside this container.

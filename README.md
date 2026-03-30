@@ -80,8 +80,9 @@ OPCACHE_INTERNED_STRINGS_BUFFER=16
 OPCACHE_REVALIDATE_FREQ=1
 
 # ---- DOMAIN / OVERWRITE NEXTCLOUD ----
-# Set to your domain (with https://) or local IP (e.g. http://192.168.1.115:8080)
-OVERWRITECLIURL=https://yourdomain.com
+# CI default — Jenkins overwrites this before starting the stack.
+# For manual testing use http://localhost:8080 or your LAN IP.
+OVERWRITECLIURL=http://localhost:8080
 OVERWRITEPROTOCOL=https
 
 # Space-separated list — add your domain and/or host machine IP
@@ -103,7 +104,7 @@ SMTP_PASSWORD=CHANGE_ME_SMTP
 
 # ---- NEXTCLOUD ADMIN DASHBOARD ----
 NEXTCLOUD_ADMIN_USER=admin
-NEXTCLOUD_ADMIN_PASSWORD=CHANGE_ME_ADMIN123$
+NEXTCLOUD_ADMIN_PASSWORD=Change_Me_Admin123$
 ```
 
 ---

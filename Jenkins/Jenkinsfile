@@ -15,51 +15,51 @@ pipeline {
 
   environment {
     // Git
-    GIT_URL    = 'https://github.com/iamjavadali/nextcloudpi.git'
+    GIT_URL = 'https://github.com/iamjavadali/nextcloudpi.git'
     GIT_BRANCH = 'dockerhub'
 
     // Repo subfolder containing Dockerfile + docker-compose.yml + .env
     APP_DIR = 'nextcloud'
 
-    // DockerHub (FIXED: tag/push ONLY amjavadali/nextcloudpi)
+    // DockerHub
     DOCKERHUB_IMAGE = 'iamjavadali/nextcloudpi'
     DOCKERHUB_CREDS = 'dockerhub-creds'
 
     // Node
     PI_NODE = 'RPi5-Regis'
 
-    // Explicit workspace path on Pi (as requested)
+    // Explicit workspace path on Pi
     RPI_COMPOSE_DIR = '/home/pi/jenkins/workspace/NextcloudPi-Docker-Build-Test-Dockerhub-Slack/'
 
     // Slack
-    SLACK_CHANNEL     = '#devopscicd'
-    SLACK_TOKEN_CRED  = 'slacktoken'
+    SLACK_CHANNEL = '#devopscicd'
+    SLACK_TOKEN_CRED = 'slacktoken'
     SLACK_TEAM_DOMAIN = 'solr-station'
   }
 
   stages {
-
     stage('Fetch code') {
       steps {
         node(env.PI_NODE) {
           dir(env.RPI_COMPOSE_DIR) {
-            // Stop any lingering containers from a previous build so their file locks
-            // are released before we try to wipe the bind-mount directories.
             sh """
               set +e
               docker stop nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
-              docker rm   nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+              docker rm nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
 
               # Clean bind-mount dirs before deleteDir().
               # 'rm -rf /target/*' misses dotfiles (.my-healthcheck.cnf etc.) so use find instead.
               for d in "${env.APP_DIR}/app" "${env.APP_DIR}/db"; do
                 [ -d "\$d" ] || continue
-                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \\
+                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \
                   sh -c "find /target -mindepth 1 -depth -delete" || true
               done
             """
+
             deleteDir()
+
             git branch: env.GIT_BRANCH, url: env.GIT_URL
+
             sh 'git rev-parse --short=7 HEAD | tee .git_short'
 
             script {
@@ -72,7 +72,7 @@ pipeline {
       }
     }
 
-    stage('Update .env Trusted Domains + OVERWRITECLIURL') {
+    stage('Update .env Trusted Domains + OVERWRITE Settings') {
       steps {
         node(env.PI_NODE) {
           dir("${env.RPI_COMPOSE_DIR}/${env.APP_DIR}") {
@@ -82,7 +82,7 @@ pipeline {
               ETH_IP="$(ip -o -4 addr show dev eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
               WLAN_IP="$(ip -o -4 addr show dev wlan0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
 
-              echo "eth0 IP : ${ETH_IP:-<none>}"
+              echo "eth0 IP : ${ETH_IP:-}"
               echo "wlan0 IP: ${WLAN_IP:-<none>}"
 
               PRIMARY_IP="$ETH_IP"
@@ -122,11 +122,15 @@ pipeline {
               add_if_missing "$ETH_IP"
               add_if_missing "$WLAN_IP"
 
-              NEW_OVERWRITE="http://$PRIMARY_IP:8080"
+              NEW_OVERWRITECLIURL="http://$PRIMARY_IP:8080"
+              NEW_OVERWRITEHOST="${PRIMARY_IP}:8080"
+              NEW_OVERWRITEPROTOCOL="http"
 
               echo "Updating .env:"
               echo "  NEXTCLOUD_TRUSTED_DOMAINS=$TRUSTED"
-              echo "  OVERWRITECLIURL=$NEW_OVERWRITE"
+              echo "  OVERWRITECLIURL=$NEW_OVERWRITECLIURL"
+              echo "  OVERWRITEHOST=$NEW_OVERWRITEHOST"
+              echo "  OVERWRITEPROTOCOL=$NEW_OVERWRITEPROTOCOL"
 
               if grep -qE "^NEXTCLOUD_TRUSTED_DOMAINS=" .env; then
                 sed -i "s|^NEXTCLOUD_TRUSTED_DOMAINS=.*|NEXTCLOUD_TRUSTED_DOMAINS=$TRUSTED|" .env
@@ -135,13 +139,25 @@ pipeline {
               fi
 
               if grep -qE "^OVERWRITECLIURL=" .env; then
-                sed -i "s|^OVERWRITECLIURL=.*|OVERWRITECLIURL=$NEW_OVERWRITE|" .env
+                sed -i "s|^OVERWRITECLIURL=.*|OVERWRITECLIURL=$NEW_OVERWRITECLIURL|" .env
               else
-                echo "OVERWRITECLIURL=$NEW_OVERWRITE" >> .env
+                echo "OVERWRITECLIURL=$NEW_OVERWRITECLIURL" >> .env
+              fi
+
+              if grep -qE "^OVERWRITEHOST=" .env; then
+                sed -i "s|^OVERWRITEHOST=.*|OVERWRITEHOST=$NEW_OVERWRITEHOST|" .env
+              else
+                echo "OVERWRITEHOST=$NEW_OVERWRITEHOST" >> .env
+              fi
+
+              if grep -qE "^OVERWRITEPROTOCOL=" .env; then
+                sed -i "s|^OVERWRITEPROTOCOL=.*|OVERWRITEPROTOCOL=$NEW_OVERWRITEPROTOCOL|" .env
+              else
+                echo "OVERWRITEPROTOCOL=$NEW_OVERWRITEPROTOCOL" >> .env
               fi
 
               echo "Final values:"
-              grep -E "^(NEXTCLOUD_TRUSTED_DOMAINS|OVERWRITECLIURL)=" .env || true
+              grep -E "^(NEXTCLOUD_TRUSTED_DOMAINS|OVERWRITECLIURL|OVERWRITEHOST|OVERWRITEPROTOCOL)=" .env || true
             '''
           }
         }
@@ -194,22 +210,110 @@ pipeline {
               docker compose --env-file .env -f docker-compose.yml up -d
 
               PRIMARY_IP="$(cat ../.primary_ip)"
-              echo "Waiting for HTTP on http://${PRIMARY_IP}:8080 ..."
+              ADMIN_USER="$(grep -E "^NEXTCLOUD_ADMIN_USER=" .env | head -n1 | cut -d= -f2- || true)"
+              ADMIN_PASS="$(grep -E "^NEXTCLOUD_ADMIN_PASSWORD=" .env | head -n1 | cut -d= -f2- || true)"
 
+              echo "Waiting for HTTP on http://${PRIMARY_IP}:8080 ..."
               i=1
               while [ "$i" -le 40 ]; do
                 if curl -fsS "http://${PRIMARY_IP}:8080/" >/dev/null 2>&1; then
                   echo "HTTP is responding."
-                  exit 0
+                  break
                 fi
                 sleep 3
                 i=$((i+1))
               done
 
-              echo "ERROR: Service did not become reachable in time."
-              docker compose --env-file .env -f docker-compose.yml ps || true
-              docker compose --env-file .env -f docker-compose.yml logs --tail=200 || true
-              exit 1
+              if [ "$i" -gt 40 ]; then
+                echo "ERROR: Service did not become reachable in time."
+                docker compose --env-file .env -f docker-compose.yml ps || true
+                docker compose --env-file .env -f docker-compose.yml logs --tail=200 || true
+                exit 1
+              fi
+
+              echo "Configured NEXTCLOUD_ADMIN_USER: ${ADMIN_USER:-<not set>}"
+
+              echo "Waiting for Nextcloud to finish installation..."
+              i=1
+              while [ "$i" -le 60 ]; do
+                STATUS_OUTPUT="$(docker compose --env-file .env -f docker-compose.yml exec -T app php occ status 2>/dev/null || true)"
+                if echo "$STATUS_OUTPUT" | grep -q "installed: true"; then
+                  echo "Nextcloud reports installed:true"
+                  echo "$STATUS_OUTPUT"
+                  break
+                fi
+
+                echo "[$i/60] Nextcloud not installed yet. Waiting 5s..."
+                sleep 5
+                i=$((i+1))
+              done
+
+              if [ "$i" -gt 60 ]; then
+                echo "ERROR: Nextcloud did not finish installation in time."
+                echo "=== docker compose ps ==="
+                docker compose --env-file .env -f docker-compose.yml ps || true
+                echo "=== app logs ==="
+                docker compose --env-file .env -f docker-compose.yml logs --tail=200 app || true
+                echo "=== web logs ==="
+                docker compose --env-file .env -f docker-compose.yml logs --tail=100 web || true
+                echo "=== db logs ==="
+                docker compose --env-file .env -f docker-compose.yml logs --tail=100 db || true
+                echo "=== redis logs ==="
+                docker compose --env-file .env -f docker-compose.yml logs --tail=50 redis || true
+                exit 1
+              fi
+
+              echo "Applying overwrite settings via occ..."
+              docker compose --env-file .env -f docker-compose.yml exec -T -u www-data app \
+                php occ config:system:set overwritehost --value="${PRIMARY_IP}:8080"
+
+              docker compose --env-file .env -f docker-compose.yml exec -T -u www-data app \
+                php occ config:system:set overwriteprotocol --value="http"
+
+              docker compose --env-file .env -f docker-compose.yml exec -T -u www-data app \
+                php occ config:system:set overwrite.cli.url --value="http://${PRIMARY_IP}:8080"
+
+              if [ -n "${ADMIN_USER:-}" ]; then
+                echo "Checking that admin user exists..."
+                USER_LIST="$(docker compose --env-file .env -f docker-compose.yml exec -T app php occ user:list 2>/dev/null || true)"
+                echo "$USER_LIST"
+                if ! echo "$USER_LIST" | grep -qE "^[[:space:]]*-[[:space:]]*${ADMIN_USER}:"; then
+                  echo "ERROR: Expected admin user '${ADMIN_USER}' was not found in Nextcloud user:list output."
+                  echo "=== app logs ==="
+                  docker compose --env-file .env -f docker-compose.yml logs --tail=200 app || true
+                  exit 1
+                fi
+                echo "Confirmed admin user '${ADMIN_USER}' exists."
+              else
+                echo "WARNING: NEXTCLOUD_ADMIN_USER not found in .env, skipping admin user existence check."
+              fi
+
+              if [ -n "${ADMIN_USER:-}" ] && [ -n "${ADMIN_PASS:-}" ]; then
+                echo "Testing authenticated WebDAV login..."
+                AUTH_CODE="$(curl -sS -o /tmp/nextcloud-dav.out -w "%{http_code}" \
+                  --user "${ADMIN_USER}:${ADMIN_PASS}" \
+                  "http://${PRIMARY_IP}:8080/remote.php/dav/files/${ADMIN_USER}/" || true)"
+
+                echo "WebDAV auth HTTP code: ${AUTH_CODE}"
+
+                case "${AUTH_CODE}" in
+                  207|200|301|302)
+                    echo "Authenticated login test passed."
+                    ;;
+                  *)
+                    echo "ERROR: Authenticated WebDAV login test failed with HTTP ${AUTH_CODE}."
+                    echo "=== app logs ==="
+                    docker compose --env-file .env -f docker-compose.yml logs --tail=200 app || true
+                    echo "=== web logs ==="
+                    docker compose --env-file .env -f docker-compose.yml logs --tail=100 web || true
+                    exit 1
+                    ;;
+                esac
+              else
+                echo "WARNING: NEXTCLOUD_ADMIN_USER or NEXTCLOUD_ADMIN_PASSWORD not found in .env, skipping authenticated WebDAV login test."
+              fi
+
+              echo "Deployment test passed: HTTP reachable, Nextcloud installed, overwrite settings applied, admin user exists, and authenticated login check completed."
             '''
           }
         }
@@ -221,7 +325,7 @@ pipeline {
         script {
           node(env.PI_NODE) {
             dir(env.RPI_COMPOSE_DIR) {
-              def ip  = readFile('.primary_ip').trim()
+              def ip = readFile('.primary_ip').trim()
               def tag = readFile('.docker_tag').trim()
 
               slackSend(
@@ -245,8 +349,7 @@ pipeline {
         script {
           try {
             timeout(time: 30, unit: 'MINUTES') {
-              input message: "Approve push to Docker Hub? (Abort will teardown + prune + wipe workspace.)",
-                    ok: "Approve Push"
+              input message: "Approve push to Docker Hub? (Abort will teardown + prune + wipe workspace.)", ok: "Approve Push"
             }
             env.APPROVED = "true"
           } catch (err) {
@@ -270,7 +373,9 @@ pipeline {
     }
 
     stage('Push Docker Image to Dockerhub (tag at end, push tag + latest)') {
-      when { expression { return env.APPROVED == "true" } }
+      when {
+        expression { return env.APPROVED == "true" }
+      }
       steps {
         node(env.PI_NODE) {
           dir(env.RPI_COMPOSE_DIR) {
@@ -279,11 +384,13 @@ pipeline {
               writeFile file: '.pushed_tag', text: tag
             }
 
-            withCredentials([usernamePassword(
-              credentialsId: env.DOCKERHUB_CREDS,
-              usernameVariable: 'DOCKERHUB_USER',
-              passwordVariable: 'DOCKERHUB_PASS'
-            )]) {
+            withCredentials([
+              usernamePassword(
+                credentialsId: env.DOCKERHUB_CREDS,
+                usernameVariable: 'DOCKERHUB_USER',
+                passwordVariable: 'DOCKERHUB_PASS'
+              )
+            ]) {
               withEnv(["IMAGE=${env.DOCKERHUB_IMAGE}"]) {
                 sh '''
                   set -eu
@@ -318,8 +425,9 @@ pipeline {
             }
 
             script {
-              def ip  = readFile('.primary_ip').trim()
+              def ip = readFile('.primary_ip').trim()
               def tag = readFile('.docker_tag').trim()
+
               slackSend(
                 teamDomain: env.SLACK_TEAM_DOMAIN,
                 tokenCredentialId: env.SLACK_TOKEN_CRED,
@@ -358,7 +466,7 @@ pipeline {
               # Fallback: stop containers by name in case docker-compose.yml was already
               # removed by a failed deleteDir() in a previous stage.
               docker stop nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
-              docker rm   nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
+              docker rm nextcloud-app nextcloud-db nextcloud-redis nextcloud-web nextcloud-cron 2>/dev/null || true
 
               echo "Removing all ${IMAGE} images..."
               docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" \
@@ -377,22 +485,22 @@ pipeline {
         }
 
         dir(env.RPI_COMPOSE_DIR) {
-          // Bind-mount dirs (./app, ./db) are owned by Docker container users.
-          // 'rm -rf /target/*' misses dotfiles; use 'find -depth -delete' instead.
           sh """
             set +e
             for d in "${env.APP_DIR}/app" "${env.APP_DIR}/db"; do
               if [ -d "\$d" ]; then
-                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \\
+                docker run --rm -v "\$(pwd)/\$d:/target" alpine:latest \
                   sh -c "find /target -mindepth 1 -depth -delete" || true
               fi
             done
           """
+
           deleteDir()
         }
       }
 
       echo 'Slack Notifications.'
+
       slackSend(
         teamDomain: env.SLACK_TEAM_DOMAIN,
         tokenCredentialId: env.SLACK_TOKEN_CRED,

@@ -237,7 +237,7 @@ That guide covers:
 
 ```bash
 docker exec nextcloud-app php occ config:system:set server_id \
-  --value="nextcloud-pi5-primary"
+  --value="nextcloudpi-primary"
 docker exec -u www-data nextcloud-app php occ config:system:set default_phone_region --value="US"
 docker exec -u www-data nextcloud-app php occ config:system:set maintenance_window_start --type=integer --value=1
 docker exec -u www-data nextcloud-app php occ db:add-missing-indices

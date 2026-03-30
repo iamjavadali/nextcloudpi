@@ -35,6 +35,10 @@ Run these `occ` commands after the stack is up and you've logged in:
 docker exec -u www-data nextcloud-app php occ config:system:set default_phone_region --value="US"
 docker exec -u www-data nextcloud-app php occ config:system:set maintenance_window_start --type=integer --value=1
 
+# Unique identifier for this instance (useful if ever scaling to multiple PHP nodes)
+docker exec nextcloud-app php occ config:system:set server_id \
+  --value="nextcloud-pi5-primary"
+
 # Enable previews and register providers (requires ffmpeg in the image for video thumbnails)
 docker exec -u www-data nextcloud-app php occ config:system:set enable_previews --type=boolean --value=true
 docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 0 --value="OC\\Preview\\Movie"

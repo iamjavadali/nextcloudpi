@@ -28,34 +28,29 @@ If you see background job warnings, give it a few minutes for the first cron to 
 
 ### 2.1 Set maintenance window, phone region, and preview providers
 
-Edit `config.php` inside the Nextcloud app volume and add the snippet **before the final `);`**:
+Run these `occ` commands after the stack is up and you've logged in:
 
 ```bash
-sudo -i
-nano /var/lib/docker/volumes/nextcloud_app/_data/config/config.php
+# Locale and maintenance window
+docker exec -u www-data nextcloud-app php occ config:system:set default_phone_region --value="US"
+docker exec -u www-data nextcloud-app php occ config:system:set maintenance_window_start --type=integer --value=1
+
+# Enable previews and register providers (requires ffmpeg in the image for video thumbnails)
+docker exec -u www-data nextcloud-app php occ config:system:set enable_previews --type=boolean --value=true
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 0 --value="OC\\Preview\\Movie"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 1 --value="OC\\Preview\\PNG"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 2 --value="OC\\Preview\\JPEG"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 3 --value="OC\\Preview\\GIF"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 4 --value="OC\\Preview\\BMP"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 5 --value="OC\\Preview\\XBitmap"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 6 --value="OC\\Preview\\MP3"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 7 --value="OC\\Preview\\MP4"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 8 --value="OC\\Preview\\TXT"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 9 --value="OC\\Preview\\MarkDown"
+docker exec -u www-data nextcloud-app php occ config:system:set enabledPreviewProviders 10 --value="OC\\Preview\\PDF"
 ```
 
-Append:
-```php
-  'default_phone_region' => 'US',
-  'maintenance_window_start' => 1,
-  'enable_previews' => true,
-  'enabledPreviewProviders' =>
-  array (
-    0 => 'OC\Preview\Movie',
-    1 => 'OC\Preview\PNG',
-    2 => 'OC\Preview\JPEG',
-    3 => 'OC\Preview\GIF',
-    4 => 'OC\Preview\BMP',
-    5 => 'OC\Preview\XBitmap',
-    6 => 'OC\Preview\MP3',
-    7 => 'OC\Preview\MP4',
-    8 => 'OC\Preview\TXT',
-    9 => 'OC\Preview\MarkDown',
-    10 => 'OC\Preview\PDF',
-  ),
-```
-Save and exit. This resolves the maintenance window and default phone region warnings and enables rich previews. 
+This resolves the maintenance window and default phone region warnings and enables rich previews.
 
 ### 2.2 Run mimetype migrations
 
@@ -93,17 +88,21 @@ docker exec -u www-data -it nextcloud-app php occ memories:places-setup
 
 ## 5) Collabora WOPI requests (allow‑listing)
 
-If Nextcloud warns about blocked WOPI requests from Collabora, you can either allow‑list the exact container IP or a subnet used by your Docker network.
+If Nextcloud warns about blocked WOPI requests from Collabora, allow‑list the IP ranges that your Collabora server resolves from.
 
-Find the Collabora container IP:
+**If running behind Cloudflare** (Collabora domain routes through Cloudflare), set the allowlist to Cloudflare's published IPv4 ranges:
+
+```bash
+docker exec -u www-data nextcloud-app php occ config:app:set richdocuments wopi_allowlist \
+  --value="103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,104.16.0.0/13,104.24.0.0/14,108.162.192.0/18,131.0.72.0/22,141.101.64.0/18,162.158.0.0/15,172.64.0.0/13,173.245.48.0/20,188.114.96.0/20,190.93.240.0/20,197.234.240.0/22,198.41.128.0/17"
+```
+
+**If running directly on the same Docker network** (no Cloudflare in front of Collabora), allow the Docker subnet instead:
+
 ```bash
 docker inspect collabora | grep IPAddress
+# Then set the /16 or /24 subnet in Nextcloud → Administration → Office → WOPI allow list
 ```
-Example output includes a line like:
-```
-"IPAddress": "172.21.0.2",
-```
-For fewer future changes, allow the subnet (for example `172.21.0.0/16` or the narrower `172.21.0.0/24`). Add these ranges to the **Office → WOPI allow list** in Nextcloud.
 
 ---
 

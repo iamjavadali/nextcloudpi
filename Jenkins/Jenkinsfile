@@ -1,0 +1,374 @@
+def COLOR_MAP = [
+  'SUCCESS': 'good',
+  'FAILURE': 'danger',
+  'ABORTED': 'warning',
+  'UNSTABLE': 'warning'
+]
+
+pipeline {
+  agent any
+
+  options {
+    timeout(time: 1, unit: 'HOURS')
+    timestamps()
+  }
+
+  environment {
+    // Git
+    GIT_URL    = 'https://github.com/iamjavadali/nextcloudpi.git'
+    GIT_BRANCH = 'dockerhub'
+
+    // Repo subfolder containing Dockerfile + docker-compose.yml + .env
+    APP_DIR = 'nextcloud'
+
+    // DockerHub (FIXED: tag/push ONLY amjavadali/nextcloudpi)
+    DOCKERHUB_IMAGE = 'iamjavadali/nextcloudpi'
+    DOCKERHUB_CREDS = 'dockerhub-creds'
+
+    // Node
+    PI_NODE = 'RPi5-Regis'
+
+    // Explicit workspace path on Pi (as requested)
+    RPI_COMPOSE_DIR = '/home/pi/jenkins/workspace/NextcloudPi-Docker-Build-Test-Dockerhub-Slack/'
+
+    // Slack
+    SLACK_CHANNEL     = '#devopscicd'
+    SLACK_TOKEN_CRED  = 'slacktoken'
+    SLACK_TEAM_DOMAIN = 'solr-station'
+  }
+
+  stages {
+
+    stage('Fetch code') {
+      steps {
+        node(env.PI_NODE) {
+          dir(env.RPI_COMPOSE_DIR) {
+            deleteDir()
+            git branch: env.GIT_BRANCH, url: env.GIT_URL
+            sh 'git rev-parse --short=7 HEAD | tee .git_short'
+
+            script {
+              def shortCommit = readFile('.git_short').trim()
+              def tag = "${env.BUILD_NUMBER}-${shortCommit}"
+              writeFile file: '.docker_tag', text: tag
+            }
+          }
+        }
+      }
+    }
+
+    stage('Update .env Trusted Domains + OVERWRITECLIURL') {
+      steps {
+        node(env.PI_NODE) {
+          dir("${env.RPI_COMPOSE_DIR}/${env.APP_DIR}") {
+            sh '''
+              set -eu
+
+              ETH_IP="$(ip -o -4 addr show dev eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
+              WLAN_IP="$(ip -o -4 addr show dev wlan0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
+
+              echo "eth0 IP : ${ETH_IP:-<none>}"
+              echo "wlan0 IP: ${WLAN_IP:-<none>}"
+
+              PRIMARY_IP="$ETH_IP"
+              [ -z "$PRIMARY_IP" ] && PRIMARY_IP="$WLAN_IP"
+
+              if [ -z "$PRIMARY_IP" ]; then
+                echo "ERROR: Could not determine a primary IPv4 address from eth0 or wlan0."
+                ip -a || true
+                exit 1
+              fi
+
+              echo "$PRIMARY_IP" > ../.primary_ip
+
+              if [ ! -f .env ]; then
+                if [ -f .env.example ]; then
+                  cp .env.example .env
+                  echo "Created .env from .env.example"
+                else
+                  echo "ERROR: .env not found and .env.example not found."
+                  ls -la
+                  exit 1
+                fi
+              fi
+
+              EXISTING="$(grep -E "^NEXTCLOUD_TRUSTED_DOMAINS=" .env | head -n1 | cut -d= -f2- || true)"
+              [ -z "$EXISTING" ] && EXISTING="localhost nextcloud-app yourdomain.com"
+
+              TRUSTED="$EXISTING"
+
+              add_if_missing () {
+                VAL="$1"
+                [ -z "$VAL" ] && return 0
+                echo "$TRUSTED" | tr " " "\\n" | grep -qx "$VAL" && return 0
+                TRUSTED="$TRUSTED $VAL"
+              }
+
+              add_if_missing "$ETH_IP"
+              add_if_missing "$WLAN_IP"
+
+              NEW_OVERWRITE="http://$PRIMARY_IP:8080"
+
+              echo "Updating .env:"
+              echo "  NEXTCLOUD_TRUSTED_DOMAINS=$TRUSTED"
+              echo "  OVERWRITECLIURL=$NEW_OVERWRITE"
+
+              if grep -qE "^NEXTCLOUD_TRUSTED_DOMAINS=" .env; then
+                sed -i "s|^NEXTCLOUD_TRUSTED_DOMAINS=.*|NEXTCLOUD_TRUSTED_DOMAINS=$TRUSTED|" .env
+              else
+                echo "NEXTCLOUD_TRUSTED_DOMAINS=$TRUSTED" >> .env
+              fi
+
+              if grep -qE "^OVERWRITECLIURL=" .env; then
+                sed -i "s|^OVERWRITECLIURL=.*|OVERWRITECLIURL=$NEW_OVERWRITE|" .env
+              else
+                echo "OVERWRITECLIURL=$NEW_OVERWRITE" >> .env
+              fi
+
+              echo "Final values:"
+              grep -E "^(NEXTCLOUD_TRUSTED_DOMAINS|OVERWRITECLIURL)=" .env || true
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Build Docker Code (docker compose build --no-cache)') {
+      steps {
+        node(env.PI_NODE) {
+          dir("${env.RPI_COMPOSE_DIR}/${env.APP_DIR}") {
+            sh 'docker --version'
+            sh 'docker compose version'
+
+            withEnv(["IMAGE=${env.DOCKERHUB_IMAGE}"]) {
+              sh '''
+                set -eu
+
+                [ -f docker-compose.yml ] || { echo "ERROR: docker-compose.yml not found in $(pwd)"; ls -la; exit 1; }
+                [ -f Dockerfile ] || echo "NOTE: Dockerfile not in this folder, compose must reference it via build.*"
+
+                echo "Building via docker compose (no cache)..."
+                docker compose --env-file .env -f docker-compose.yml build --no-cache --pull
+
+                echo "Verifying image exists (should be ${IMAGE}:latest or ${IMAGE}:<some-tag>)..."
+                if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE}:"; then
+                  docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "^${IMAGE}:" || true
+                else
+                  echo "ERROR: No images found for ${IMAGE} after compose build."
+                  docker images | head -n 50 || true
+                  exit 1
+                fi
+              '''
+            }
+          }
+        }
+      }
+    }
+
+    stage('Deploy & Test on RPi5-Regis') {
+      steps {
+        node(env.PI_NODE) {
+          dir("${env.RPI_COMPOSE_DIR}/${env.APP_DIR}") {
+            sh '''
+              set -eu
+
+              echo "Bringing down any existing stack (with volumes)..."
+              docker compose --env-file .env -f docker-compose.yml down --remove-orphans --volumes || true
+
+              echo "Starting stack..."
+              docker compose --env-file .env -f docker-compose.yml up -d
+
+              PRIMARY_IP="$(cat ../.primary_ip)"
+              echo "Waiting for HTTP on http://${PRIMARY_IP}:8080 ..."
+
+              i=1
+              while [ "$i" -le 40 ]; do
+                if curl -fsS "http://${PRIMARY_IP}:8080/" >/dev/null 2>&1; then
+                  echo "HTTP is responding."
+                  exit 0
+                fi
+                sleep 3
+                i=$((i+1))
+              done
+
+              echo "ERROR: Service did not become reachable in time."
+              docker compose --env-file .env -f docker-compose.yml ps || true
+              docker compose --env-file .env -f docker-compose.yml logs --tail=200 || true
+              exit 1
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Notify Ready for Manual Approval') {
+      steps {
+        script {
+          node(env.PI_NODE) {
+            dir(env.RPI_COMPOSE_DIR) {
+              def ip  = readFile('.primary_ip').trim()
+              def tag = readFile('.docker_tag').trim()
+
+              slackSend(
+                teamDomain: env.SLACK_TEAM_DOMAIN,
+                tokenCredentialId: env.SLACK_TOKEN_CRED,
+                channel: env.SLACK_CHANNEL,
+                color: 'good',
+                message: "*READY FOR APPROVAL:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n" +
+                         "Test URL: http://${ip}:8080\n" +
+                         "Will push as: ${env.DOCKERHUB_IMAGE}:${tag} and ${env.DOCKERHUB_IMAGE}:latest\n" +
+                         "Approve in Jenkins: ${env.BUILD_URL}"
+              )
+            }
+          }
+        }
+      }
+    }
+
+    stage('Manual Approval') {
+      steps {
+        script {
+          try {
+            timeout(time: 30, unit: 'MINUTES') {
+              input message: "Approve push to Docker Hub? (Abort will teardown + prune + wipe workspace.)",
+                    ok: "Approve Push"
+            }
+            env.APPROVED = "true"
+          } catch (err) {
+            env.APPROVED = "false"
+            currentBuild.result = 'ABORTED'
+
+            slackSend(
+              teamDomain: env.SLACK_TEAM_DOMAIN,
+              tokenCredentialId: env.SLACK_TOKEN_CRED,
+              channel: env.SLACK_CHANNEL,
+              color: 'warning',
+              message: "*ABORTED:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n" +
+                       "Approval was not granted. Cleaning up the Pi node now.\n" +
+                       "Build: ${env.BUILD_URL}"
+            )
+
+            throw err
+          }
+        }
+      }
+    }
+
+    stage('Push Docker Image to Dockerhub (tag at end, push tag + latest)') {
+      when { expression { return env.APPROVED == "true" } }
+      steps {
+        node(env.PI_NODE) {
+          dir(env.RPI_COMPOSE_DIR) {
+            script {
+              def tag = readFile('.docker_tag').trim()
+              writeFile file: '.pushed_tag', text: tag
+            }
+
+            withCredentials([usernamePassword(
+              credentialsId: env.DOCKERHUB_CREDS,
+              usernameVariable: 'DOCKERHUB_USER',
+              passwordVariable: 'DOCKERHUB_PASS'
+            )]) {
+              withEnv(["IMAGE=${env.DOCKERHUB_IMAGE}"]) {
+                sh '''
+                  set -eu
+
+                  TAG="$(cat .docker_tag)"
+
+                  echo "Ensuring ${IMAGE}:latest exists for tagging..."
+                  if ! docker image inspect "${IMAGE}:latest" >/dev/null 2>&1; then
+                    ID="$(docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "^${IMAGE}:" | head -n1 | awk '{print $2}' || true)"
+                    if [ -z "$ID" ]; then
+                      echo "ERROR: Could not find any local image for ${IMAGE} to push."
+                      docker images | head -n 50 || true
+                      exit 1
+                    fi
+                    docker tag "$ID" "${IMAGE}:latest"
+                  fi
+
+                  echo "Tagging for push: ${IMAGE}:latest -> ${IMAGE}:${TAG}"
+                  docker tag "${IMAGE}:latest" "${IMAGE}:${TAG}"
+
+                  echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+
+                  echo "Pushing ${IMAGE}:${TAG}"
+                  docker push "${IMAGE}:${TAG}"
+
+                  echo "Pushing ${IMAGE}:latest"
+                  docker push "${IMAGE}:latest"
+
+                  docker logout
+                '''
+              }
+            }
+
+            script {
+              def ip  = readFile('.primary_ip').trim()
+              def tag = readFile('.docker_tag').trim()
+              slackSend(
+                teamDomain: env.SLACK_TEAM_DOMAIN,
+                tokenCredentialId: env.SLACK_TOKEN_CRED,
+                channel: env.SLACK_CHANNEL,
+                color: 'good',
+                message: "*PUSHED TO DOCKER HUB:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n" +
+                         "Image: ${env.DOCKERHUB_IMAGE}:${tag}\n" +
+                         "Also pushed: ${env.DOCKERHUB_IMAGE}:latest\n" +
+                         "Test was: http://${ip}:8080\n" +
+                         "Build: ${env.BUILD_URL}"
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      node(env.PI_NODE) {
+        dir("${env.RPI_COMPOSE_DIR}/${env.APP_DIR}") {
+          withEnv(["IMAGE=${env.DOCKERHUB_IMAGE}"]) {
+            sh '''
+              set +e
+
+              if [ -f docker-compose.yml ]; then
+                echo "Tearing down compose stack (remove orphans + volumes)..."
+                if [ -f .env ]; then
+                  docker compose --env-file .env -f docker-compose.yml down --remove-orphans --volumes || true
+                else
+                  docker compose -f docker-compose.yml down --remove-orphans --volumes || true
+                fi
+              fi
+
+              echo "Removing all ${IMAGE} images..."
+              docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" \
+                | grep "^${IMAGE}:" \
+                | awk '{print $2}' \
+                | sort -u \
+                | xargs -r docker rmi -f || true
+
+              echo "Pruning unused images/containers/networks/volumes (including old db images not used)..."
+              docker system prune -af --volumes || true
+
+              echo "Pruning build cache..."
+              docker builder prune -af || true
+            '''
+          }
+        }
+
+        dir(env.RPI_COMPOSE_DIR) {
+          deleteDir()
+        }
+      }
+
+      echo 'Slack Notifications.'
+      slackSend(
+        teamDomain: env.SLACK_TEAM_DOMAIN,
+        tokenCredentialId: env.SLACK_TOKEN_CRED,
+        channel: env.SLACK_CHANNEL,
+        color: (COLOR_MAP[currentBuild.currentResult] ?: 'warning'),
+        message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}\nMore info: ${env.BUILD_URL}"
+      )
+    }
+  }
+}
